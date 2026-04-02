@@ -1,9 +1,6 @@
 package utils
 
 import (
-	"crypto/rand"
-	"fmt"
-	"math/big"
 	"encoding/csv"
 	"os"
 	"log"
@@ -35,6 +32,10 @@ func ReadCSV(filePath string) [][]interface{} {
 		newRecord := []interface{}{record[0], record[1], mapping(a, l, e)}
 		result = append(result, newRecord)
 	}
-	
+
 	return result
+}
+
+func mapping(a int, l int, e int) int {
+	return 4 * a + 2 * l + e
 }

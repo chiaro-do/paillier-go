@@ -4,14 +4,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
-
+	"crypto/rand"
+	"math/big"
+	"encoding/csv"
+	"os"
+	"log"
+	"strconv"
 	"github.com/hyperledger/fabric-contract-api-go/contractapi"
+	"paillier-go/utils"
+	"paillier-go/paillier"
 )
 
 type SmartContract struct {
 	contractapi.Contract
 }
-
+const cats = 20
 // Structure storing encrypted counters
 type EncryptedCounters struct {
 	Counters map[int]string `json:"counters"` // ciphertexts as strings
@@ -29,8 +36,7 @@ func (s *SmartContract) InitLedger(ctx contractapi.TransactionContextInterface, 
 	counters := make(map[int]string)
 
 	// Initialize all 20 counters as E(0) = 1 * r^n mod n^2
-	for i := 0; i < 20; i++ {
-		// For simplicity: initialize as 1 (valid Paillier zero encryption with r=1)
+	for i := 0; i < cats; i++ {
 		counters[i] = "1"
 	}
 
@@ -97,6 +103,44 @@ func (s *SmartContract) GetAllCounters(ctx contractapi.TransactionContextInterfa
 	json.Unmarshal(bytes, &state)
 
 	return state.Counters, nil
+}
+
+func (s *SmartContract) DecryptCounter(ctx contractapi.TransactionContextInterface, k int, privateKeyStr string) (string, error) {
+
+    bytes, err := ctx.GetStub().GetState("LOG_COUNTERS")
+    if err != nil || bytes == nil {
+        return "", fmt.Errorf("state not found")
+    }
+
+    var state EncryptedCounters
+    err = json.Unmarshal(bytes, &state)
+    if err != nil {
+        return "", fmt.Errorf("failed to unmarshal state: %s", err.Error())
+    }
+
+    encryptedValueStr := state.Counters[k]
+    if encryptedValueStr == "" {
+        return "", fmt.Errorf("counter not found at index %d", k)
+    }
+
+    privateKeyBytes, err := base64.StdEncoding.DecodeString(privateKeyStr)
+    if err != nil {
+        return "", fmt.Errorf("failed to decode private key: %s", err.Error())
+    }
+
+    privateKey := new(PaillierPrivateKey)
+    err = privateKey.Unmarshal(privateKeyBytes)
+    if err != nil {
+        return "", fmt.Errorf("failed to unmarshal private key: %s", err.Error())
+    }
+
+    encryptedValue := new(big.Int)
+    encryptedValue.SetString(encryptedValueStr, 10)
+    
+    decryptedValue := new(big.Int).Exp(encryptedValue, privateKey.Lambda, privateKey.N)
+    decryptedValue.Mod(decryptedValue, privateKey.N)
+
+    return decryptedValue.String(), nil
 }
 
 func main() {
