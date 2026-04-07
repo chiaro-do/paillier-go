@@ -3,7 +3,6 @@ package paillier
 import (
 	"encoding/json"
 	"fmt"
-	"math/big"
 	"crypto/rand"
 	"math/big"
 	"encoding/csv"
@@ -15,11 +14,11 @@ import (
 	"paillier-go/paillier"
 )
 
+const cats = 20
 type SmartContract struct {
 	contractapi.Contract
 }
-const cats = 20
-// Structure storing encrypted counters
+
 type EncryptedCounters struct {
 	Counters map[int]string `json:"counters"` // ciphertexts as strings
 	N        string         `json:"n"`        // public key n
@@ -29,13 +28,15 @@ type EncryptedCounters struct {
 func (s *SmartContract) InitLedger(ctx contractapi.TransactionContextInterface, nStr string) error {
 
 	n := new(big.Int)
-	n.SetString(nStr, 10)
+	if _, vrf := n.SetString(nStr, 10); !vrf {
+		return fmt.Errorf("invalid n")
+	}
 
 	nsquare := new(big.Int).Mul(n, n)
 
 	counters := make(map[int]string)
 
-	// Initialize all 20 counters as E(0) = 1 * r^n mod n^2
+	// Initialize E(0) = 1 * r^n mod n^2
 	for i := 0; i < cats; i++ {
 		counters[i] = "1"
 	}
@@ -46,19 +47,28 @@ func (s *SmartContract) InitLedger(ctx contractapi.TransactionContextInterface, 
 		Nsquare:  nsquare.String(),
 	}
 
-	bytes, _ := json.Marshal(state)
+	bytes, err := json.Marshal(state)
+	if err != nil {
+		return err
+	}
 	return ctx.GetStub().PutState("LOG_COUNTERS", bytes)
 }
 
 func (s *SmartContract) UpdateCounter(ctx contractapi.TransactionContextInterface, k int, encryptedOne string) error {
 
+	if k < 0 || k >= cats {
+		return fmt.Errorf("invalid counter index")
+	}
+	
 	bytes, err := ctx.GetStub().GetState("LOG_COUNTERS")
 	if err != nil || bytes == nil {
 		return fmt.Errorf("state not found")
 	}
 
 	var state EncryptedCounters
-	json.Unmarshal(bytes, &state)
+	if err := json.Unmarshal(bytes, &state); err != nil {
+		return err
+	}
 
 	nsquare := new(big.Int)
 	nsquare.SetString(state.Nsquare, 10)
@@ -67,7 +77,9 @@ func (s *SmartContract) UpdateCounter(ctx contractapi.TransactionContextInterfac
 	current.SetString(state.Counters[k], 10)
 
 	eOne := new(big.Int)
-	eOne.SetString(encryptedOne, 10)
+	if _, vrf := eOne.SetString(encryptedOne, 10); !vrf {
+		return fmt.Errorf("invalid ciphertext")
+	}
 
 	// Homomorphic addition C_k = C_k * E(1) mod (n^2)
 	updated := new(big.Int).Mul(current, eOne)
@@ -75,11 +87,18 @@ func (s *SmartContract) UpdateCounter(ctx contractapi.TransactionContextInterfac
 
 	state.Counters[k] = updated.String()
 
-	newBytes, _ := json.Marshal(state)
+	newBytes, err := json.Marshal(state)
+	if err != nil {
+		return err
+	}
 	return ctx.GetStub().PutState("LOG_COUNTERS", newBytes)
 }
 
 func (s *SmartContract) GetCounter(ctx contractapi.TransactionContextInterface, k int) (string, error) {
+
+	if k < 0 || k >= cats {
+    	return fmt.Errorf("invalid counter index")
+	}
 
 	bytes, err := ctx.GetStub().GetState("LOG_COUNTERS")
 	if err != nil || bytes == nil {
@@ -87,7 +106,9 @@ func (s *SmartContract) GetCounter(ctx contractapi.TransactionContextInterface, 
 	}
 
 	var state EncryptedCounters
-	json.Unmarshal(bytes, &state)
+	if err := json.Unmarshal(bytes, &state); err != nil {
+		return "", err
+	}
 
 	return state.Counters[k], nil
 }
@@ -95,53 +116,62 @@ func (s *SmartContract) GetCounter(ctx contractapi.TransactionContextInterface, 
 func (s *SmartContract) GetAllCounters(ctx contractapi.TransactionContextInterface) (map[int]string, error) {
 
 	bytes, err := ctx.GetStub().GetState("LOG_COUNTERS")
-	if err != nil || bytes == nil {
+	if err != nil {
+		return nil, fmt.Errorf("failed to read state: %v", err)
+	}
+	if bytes == nil {
 		return nil, fmt.Errorf("state not found")
 	}
 
 	var state EncryptedCounters
-	json.Unmarshal(bytes, &state)
+	if err := json.Unmarshal(bytes, &state); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal state: %v", err)
+	}
+
+	if state.Counters == nil {
+		return nil, fmt.Errorf("counters not initialized")
+	}
 
 	return state.Counters, nil
 }
 
-func (s *SmartContract) DecryptCounter(ctx contractapi.TransactionContextInterface, k int, privateKeyStr string) (string, error) {
+// func (s *SmartContract) DecryptCounter(ctx contractapi.TransactionContextInterface, k int, privateKeyStr string) (string, error) {
 
-    bytes, err := ctx.GetStub().GetState("LOG_COUNTERS")
-    if err != nil || bytes == nil {
-        return "", fmt.Errorf("state not found")
-    }
+//     bytes, err := ctx.GetStub().GetState("LOG_COUNTERS")
+//     if err != nil || bytes == nil {
+//         return "", fmt.Errorf("state not found")
+//     }
 
-    var state EncryptedCounters
-    err = json.Unmarshal(bytes, &state)
-    if err != nil {
-        return "", fmt.Errorf("failed to unmarshal state: %s", err.Error())
-    }
+//     var state EncryptedCounters
+//     err = json.Unmarshal(bytes, &state)
+//     if err != nil {
+//         return "", fmt.Errorf("failed to unmarshal state: %s", err.Error())
+//     }
 
-    encryptedValueStr := state.Counters[k]
-    if encryptedValueStr == "" {
-        return "", fmt.Errorf("counter not found at index %d", k)
-    }
+//     encryptedValueStr := state.Counters[k]
+//     if encryptedValueStr == "" {
+//         return "", fmt.Errorf("counter not found at index %d", k)
+//     }
 
-    privateKeyBytes, err := base64.StdEncoding.DecodeString(privateKeyStr)
-    if err != nil {
-        return "", fmt.Errorf("failed to decode private key: %s", err.Error())
-    }
+//     privateKeyBytes, err := base64.StdEncoding.DecodeString(privateKeyStr)
+//     if err != nil {
+//         return "", fmt.Errorf("failed to decode private key: %s", err.Error())
+//     }
 
-    privateKey := new(PaillierPrivateKey)
-    err = privateKey.Unmarshal(privateKeyBytes)
-    if err != nil {
-        return "", fmt.Errorf("failed to unmarshal private key: %s", err.Error())
-    }
+//     privateKey := new(PaillierPrivateKey)
+//     err = privateKey.Unmarshal(privateKeyBytes)
+//     if err != nil {
+//         return "", fmt.Errorf("failed to unmarshal private key: %s", err.Error())
+//     }
 
-    encryptedValue := new(big.Int)
-    encryptedValue.SetString(encryptedValueStr, 10)
+//     encryptedValue := new(big.Int)
+//     encryptedValue.SetString(encryptedValueStr, 10)
     
-    decryptedValue := new(big.Int).Exp(encryptedValue, privateKey.Lambda, privateKey.N)
-    decryptedValue.Mod(decryptedValue, privateKey.N)
+//     decryptedValue := new(big.Int).Exp(encryptedValue, privateKey.Lambda, privateKey.N)
+//     decryptedValue.Mod(decryptedValue, privateKey.N)
 
-    return decryptedValue.String(), nil
-}
+//     return decryptedValue.String(), nil
+// }
 
 func main() {
 	chaincode, err := contractapi.NewChaincode(new(SmartContract))
