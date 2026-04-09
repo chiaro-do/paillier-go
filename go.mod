@@ -1,3 +1,3 @@
 module paillier-go
 
-go 1.21.13
+go 1.26.2
